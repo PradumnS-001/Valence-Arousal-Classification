@@ -4,6 +4,7 @@ import os
 import pickle
 from typing import TypedDict
 import numpy
+from torchaudio.functional import resample
 
 from extraUtils.misc import get_leaf_files
 from configs import *
@@ -18,7 +19,6 @@ class DEAPDict(TypedDict):
 class DEAP(Dataset):
     
     def __init__(self, files:list[str],mode:str='train',p:float=0.3):
-        self.files = files
         self.mode = mode
         self.p = p
         
@@ -26,7 +26,7 @@ class DEAP(Dataset):
         data_list = []
         label_list = []
         
-        for file in self.files:
+        for file in files:
             with open(file, 'rb') as f:
                 subject = pickle.load(f, encoding='latin1')
                 data_list.append(subject['data'])
@@ -58,28 +58,41 @@ class DEAP(Dataset):
         bvp = torch.tensor(self.data[index, 38, 23*128:], dtype=torch.float32)
         label = self.mapped_labels[index]
         
-        eeg = eeg * (eeg.var(dim=-1, keepdim=True)>1e-5).float()
-        gsr = gsr * (gsr.var(dim=-1, keepdim=True)>1e-5).float()
-        bvp = bvp * (bvp.var(dim=-1, keepdim=True)>1e-5).float()
+        if resample_signals:
+            gsr = resample(gsr, orig_freq=128, new_freq=32)
+            bvp = resample(bvp, orig_freq=128, new_freq=32)
+        
+        eeg = eeg * (eeg.var(dim=-1, keepdim=True)>1e-4).float()
+        gsr = gsr * (gsr.var(dim=-1, keepdim=True)>1e-4).float()
+        bvp = bvp * (bvp.var(dim=-1, keepdim=True)>1e-4).float()
         
         if self.mode == 'train':
             ran = numpy.random.uniform()
             if ran <= self.p / 2 and bvp.abs().sum(): gsr = torch.zeros_like(gsr)
             if ran > self.p / 2 and ran <= self.p and gsr.abs().sum(): bvp = torch.zeros_like(bvp)
+            
+        eeg = (eeg - eeg.mean(dim=-1, keepdim=True)) / (eeg.std(dim=-1, keepdim=True) + 1e-6)
+        gsr = (gsr - gsr.mean(dim=-1, keepdim=True)) / (gsr.std(dim=-1, keepdim=True) + 1e-6)
+        bvp = (bvp - bvp.mean(dim=-1, keepdim=True)) / (bvp.std(dim=-1, keepdim=True) + 1e-6)
         
+        eeg = eeg.unfold(dimension=-1, size=128*4, step=128*2).permute(1,0,2)
+        if not resample_signals:
+            gsr = gsr.unfold(dimension=-1, size=128*8, step=128*2).unsqueeze(1)
+            bvp = bvp.unfold(dimension=-1, size=128*8, step=128*2).unsqueeze(1)
+        else:
+            gsr = gsr.unfold(dimension=-1, size=32*8, step=32*2).unsqueeze(1)
+            bvp = bvp.unfold(dimension=-1, size=32*8, step=32*2).unsqueeze(1)
+            
         return {
             'patient_label':torch.tensor(index // 40, dtype=torch.long),
             'emotion_label':torch.tensor(label, dtype=torch.long),
-            'eeg':(eeg - eeg.mean(dim=-1, keepdim=True)) / (eeg.std(dim=-1, keepdim=True) + 1e-6),
-            'gsr':(gsr - gsr.mean(dim=-1, keepdim=True)) / (gsr.std(dim=-1, keepdim=True) + 1e-6),
-            'bvp':(bvp - bvp.mean(dim=-1, keepdim=True)) / (bvp.std(dim=-1, keepdim=True) + 1e-6)
+            'eeg':eeg,
+            'gsr':gsr,
+            'bvp':bvp
             }
         
-def build_loaders(dataset:str='DEAP')->tuple[DataLoader[DEAPDict], DataLoader[DEAPDict]]:
-    
+def build_loaders(dataset:str='DEAP'):
     dataset = dataset.upper()
-    val_wts = []
-    trn_wts = []
     
     if dataset == 'DEAP':
         
@@ -90,7 +103,7 @@ def build_loaders(dataset:str='DEAP')->tuple[DataLoader[DEAPDict], DataLoader[DE
         numpy.random.shuffle(files)
         
         val = DEAP(files=[files[-1]],mode='val')
-        val_wts = sum(val.weights) / numpy.array(val.weights)
+        val_wts = numpy.array(val.weights)
         
         trn = DEAP(files=files[:-1],mode='train')
         trn_wts = sum(trn.weights) / numpy.array(trn.weights)
@@ -98,7 +111,7 @@ def build_loaders(dataset:str='DEAP')->tuple[DataLoader[DEAPDict], DataLoader[DE
     trnLoader = DataLoader(dataset=trn, batch_size=32, shuffle=True,pin_memory=True,num_workers=4, persistent_workers=True, prefetch_factor=2)
     valLoader = DataLoader(dataset=val, batch_size=32, shuffle=False,pin_memory=True,num_workers=4, persistent_workers=True, prefetch_factor=2)
     
-    return trnLoader, trn_wts / (numpy.min(trn_wts) + 1e-6), valLoader, val_wts / (numpy.min(val_wts) + 1e-6)
+    return trnLoader, trn_wts / (numpy.min(trn_wts) + 1e-6), valLoader, val_wts
     
 if __name__ == '__main__':
     
@@ -107,5 +120,5 @@ if __name__ == '__main__':
     print(vw)
     for mapper in data:
         for key, val in mapper.items():
-            print(key, val.shape, val[0])
+            print(key, val.shape)
         break
