@@ -53,20 +53,23 @@ class DEAP(Dataset):
     
     def __getitem__(self, index)->DEAPDict:
         
-        eeg = torch.tensor(self.data[index, :32, 23*128:59*128], dtype=torch.float32)
+        if mode in ['train', 'val']:
+            eeg = torch.tensor(self.data[index, :32, 23*128:59*128], dtype=torch.float32)
+        elif mode in ['train2', 'val2']:
+            eeg = torch.tensor(self.data[index, :32, 23*128:], dtype=torch.float32)
         gsr = torch.tensor(self.data[index, 36, 23*128:], dtype=torch.float32)
         bvp = torch.tensor(self.data[index, 38, 23*128:], dtype=torch.float32)
         label = self.mapped_labels[index]
         
         if resample_signals:
-            gsr = resample(gsr, orig_freq=128, new_freq=32)
+            gsr = resample(gsr, orig_freq=128, new_freq=16)
             bvp = resample(bvp, orig_freq=128, new_freq=32)
         
         eeg = eeg * (eeg.var(dim=-1, keepdim=True)>1e-4).float()
         gsr = gsr * (gsr.var(dim=-1, keepdim=True)>1e-4).float()
         bvp = bvp * (bvp.var(dim=-1, keepdim=True)>1e-4).float()
         
-        if self.mode == 'train':
+        if self.mode in ['train', 'train2']:
             ran = numpy.random.uniform()
             if ran <= self.p / 2 and bvp.abs().sum(): gsr = torch.zeros_like(gsr)
             if ran > self.p / 2 and ran <= self.p and gsr.abs().sum(): bvp = torch.zeros_like(bvp)
@@ -75,12 +78,13 @@ class DEAP(Dataset):
         gsr = (gsr - gsr.mean(dim=-1, keepdim=True)) / (gsr.std(dim=-1, keepdim=True) + 1e-6)
         bvp = (bvp - bvp.mean(dim=-1, keepdim=True)) / (bvp.std(dim=-1, keepdim=True) + 1e-6)
         
-        eeg = eeg.unfold(dimension=-1, size=128*4, step=128*2).permute(1,0,2)
+        if mode in ['train', 'val']: eeg = eeg.unfold(dimension=-1, size=128*4, step=128*2).permute(1,0,2)
+        elif mode in ['train2', 'val2']: eeg = eeg.unfold(dimension=-1, size=128*8, step=128*2).permute(1,0,2)
         if not resample_signals:
             gsr = gsr.unfold(dimension=-1, size=128*8, step=128*2).unsqueeze(1)
             bvp = bvp.unfold(dimension=-1, size=128*8, step=128*2).unsqueeze(1)
         else:
-            gsr = gsr.unfold(dimension=-1, size=32*8, step=32*2).unsqueeze(1)
+            gsr = gsr.unfold(dimension=-1, size=16*8, step=16*2).unsqueeze(1)
             bvp = bvp.unfold(dimension=-1, size=32*8, step=32*2).unsqueeze(1)
             
         return {
@@ -102,10 +106,10 @@ def build_loaders(dataset:str='DEAP'):
         )
         numpy.random.shuffle(files)
         
-        val = DEAP(files=[files[-1]],mode='val')
+        val = DEAP(files=files[-1:],mode=vmode)
         val_wts = numpy.array(val.weights)
         
-        trn = DEAP(files=files[:-1],mode='train')
+        trn = DEAP(files=files[:-1],mode=mode)
         trn_wts = sum(trn.weights) / numpy.array(trn.weights)
         
     trnLoader = DataLoader(dataset=trn, batch_size=32, shuffle=True,pin_memory=True,num_workers=4, persistent_workers=True, prefetch_factor=2)

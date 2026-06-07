@@ -7,4 +7,3 @@ torchview
 matplotlib
 seaborn
 tqdm
-pandas
