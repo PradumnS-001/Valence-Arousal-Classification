@@ -7,3 +7,4 @@ torchview
 matplotlib
 seaborn
 tqdm
+einops

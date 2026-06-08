@@ -106,14 +106,14 @@ def build_loaders(dataset:str='DEAP'):
         )
         numpy.random.shuffle(files)
         
-        val = DEAP(files=files[-1:],mode=vmode)
+        val = DEAP(files=files[num_pats:],mode=vmode)
         val_wts = numpy.array(val.weights)
         
-        trn = DEAP(files=files[:-1],mode=mode)
+        trn = DEAP(files=files[:num_pats],mode=mode)
         trn_wts = sum(trn.weights) / numpy.array(trn.weights)
         
-    trnLoader = DataLoader(dataset=trn, batch_size=32, shuffle=True,pin_memory=True,num_workers=4, persistent_workers=True, prefetch_factor=2)
-    valLoader = DataLoader(dataset=val, batch_size=32, shuffle=False,pin_memory=True,num_workers=4, persistent_workers=True, prefetch_factor=2)
+    trnLoader = DataLoader(dataset=trn, batch_size=batch_size, shuffle=True,pin_memory=True,num_workers=4, persistent_workers=True, prefetch_factor=4)
+    valLoader = DataLoader(dataset=val, batch_size=batch_size, shuffle=False,pin_memory=True,num_workers=4, persistent_workers=True, prefetch_factor=4)
     
     return trnLoader, trn_wts / (numpy.min(trn_wts) + 1e-6), valLoader, val_wts
     
